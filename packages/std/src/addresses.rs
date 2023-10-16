@@ -250,6 +250,38 @@ impl fmt::Display for CanonicalAddr {
     }
 }
 
+/// Creates a contract address using contract's code identifier and contract's instance identifier.
+/// Returns _unpredictable_ address in terms that in real-life blockchain, the contract's instance
+/// identifier is not known before calling this function.
+///
+/// This function is suitable for generating _unpredictable_ contract addresses during testing.
+/// Please bear in mind, that this function may generate conflicting contract addresses
+/// for contracts with the same code and instance identifiers.  
+///
+/// # Example
+///
+/// ```
+/// # use cosmwasm_std::{DepsMut, entry_point, Env, instantiate_address, MessageInfo, Response, StdError};
+/// # type ExecuteMsg = ();
+/// #[entry_point]
+/// pub fn execute(
+///     deps: DepsMut,
+///     env: Env,
+///     info: MessageInfo,
+///     msg: ExecuteMsg,
+/// ) -> Result<Response, StdError> {
+///     let canonical_addr = instantiate_address(1, 124);
+///     let addr = deps.api.addr_humanize(&canonical_addr)?;
+/// #   Ok(Default::default())
+/// }
+/// ```
+pub fn instantiate_address(code_id: u64, instance_id: u64) -> CanonicalAddr {
+    let mut key = Vec::<u8>::new();
+    key.extend_from_slice(&code_id.to_be_bytes());
+    key.extend_from_slice(&instance_id.to_be_bytes());
+    hash_module_wasm(&key).into()
+}
+
 #[derive(Error, Debug, PartialEq, Eq)]
 pub enum Instantiate2AddressError {
     /// Checksum must be 32 bytes
@@ -336,7 +368,6 @@ fn instantiate2_address_impl(
     };
 
     let mut key = Vec::<u8>::new();
-    key.extend_from_slice(b"wasm\0");
     key.extend_from_slice(&(checksum.len() as u64).to_be_bytes());
     key.extend_from_slice(checksum);
     key.extend_from_slice(&(creator.len() as u64).to_be_bytes());
@@ -345,12 +376,21 @@ fn instantiate2_address_impl(
     key.extend_from_slice(salt);
     key.extend_from_slice(&(msg.len() as u64).to_be_bytes());
     key.extend_from_slice(msg);
-    let address_data = hash("module", &key);
+    let address_data = hash_module_wasm(&key);
     Ok(address_data.into())
 }
 
+/// Module address Hash for `wasm` module, see section **Module Account Addresses**
+/// in <https://github.com/cosmos/cosmos-sdk/blob/v0.45.8/docs/architecture/adr-028-public-key-addresses.md>.
+fn hash_module_wasm(key: &[u8]) -> Vec<u8> {
+    let mut wasm_key = Vec::<u8>::new();
+    wasm_key.extend_from_slice(b"wasm\0");
+    wasm_key.extend_from_slice(key);
+    hash("module", &wasm_key)
+}
+
 /// The "Basic Address" Hash from
-/// https://github.com/cosmos/cosmos-sdk/blob/v0.45.8/docs/architecture/adr-028-public-key-addresses.md
+/// <https://github.com/cosmos/cosmos-sdk/blob/v0.45.8/docs/architecture/adr-028-public-key-addresses.md>.
 fn hash(ty: &str, key: &[u8]) -> Vec<u8> {
     let inner = Sha256::digest(ty.as_bytes());
     Sha256::new().chain(inner).chain(key).finalize().to_vec()
@@ -614,6 +654,34 @@ mod tests {
         assert_eq!(value, &flexible(&addr));
         // pass by value
         assert_eq!(value, &flexible(addr));
+    }
+
+    #[test]
+    fn instantiate_address_works() {
+        assert_eq!(
+            instantiate_address(0, 0),
+            CanonicalAddr::from(hex!(
+                "73dc787613e2df233d8c84d9fc1e7d201e056647320617233f7d173d38951d3c"
+            ))
+        );
+        assert_eq!(
+            instantiate_address(0, 1),
+            CanonicalAddr::from(hex!(
+                "a6875f5836ab3a589c3b58799cd537f78f5f2018729bb0fd53985c25b92813eb"
+            ))
+        );
+        assert_eq!(
+            instantiate_address(1, 0),
+            CanonicalAddr::from(hex!(
+                "d89b773197529c35bfcea15c6236873a940eb1d6353f8ccbdd026c1003f7e813"
+            ))
+        );
+        assert_eq!(
+            instantiate_address(1, 1),
+            CanonicalAddr::from(hex!(
+                "ade4a5f5803a439835c636395a8d648dee57b2fc90d98dc17fa887159b69638b"
+            ))
+        );
     }
 
     #[test]
